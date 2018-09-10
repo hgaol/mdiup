@@ -7,6 +7,7 @@ import (
 	"strings"
 	"net/url"
 	"path"
+	"qiniupkg.com/x/log.v7"
 )
 
 type ImageType int
@@ -37,7 +38,7 @@ func contains(list []string, str string) bool {
 	return false
 }
 
-func newMarkdownUp(path, accessKey, secretKey, bucket string, allowImgSuffix []string) MarkdownUp {
+func NewMarkdownUp(path, accessKey, secretKey, bucket string, allowImgSuffix []string) MarkdownUp {
 	uploader := NewUploader(accessKey, secretKey, bucket, allowImgSuffix)
 	uploader.init()
 	return MarkdownUp{
@@ -49,16 +50,21 @@ func newMarkdownUp(path, accessKey, secretKey, bucket string, allowImgSuffix []s
 func (mu *MarkdownUp) upload() {
 	mdFiles := mu.getMdFiles()
 	for _, mdFile := range mdFiles {
+		// 回滚，不进行后续操作
+		if rollback {
+			mu.rollback(mdFile)
+			continue
+		}
+		log.Info("file: " + mdFile)
 		dat, err := ioutil.ReadFile(mdFile)
 		if err != nil {
 			panic(err)
 		}
 		fileStr := string(dat)
 		// 1. 备份
-		mu.backup(dat)
+		mu.backup(mdFile)
 		// 2. 找出其所有图片
 		images := mu.findAllImages(fileStr)
-		//fmt.Println(images)
 		imgMap := mu.uploadImages(images)
 		// replace
 		target := mu.replace(fileStr, imgMap)
@@ -68,8 +74,21 @@ func (mu *MarkdownUp) upload() {
 	//fmt.Println(mdFiles)
 }
 
-func (mu *MarkdownUp) backup(dat []byte) {
-	// todo
+func (mu *MarkdownUp) backup(filePath string) {
+	fileName := filePath[(strings.LastIndex(filePath, "/"))+1:]
+	backupFile := path.Join(home, fileName)
+	_, err := os.Stat(backupFile)
+	if backup || os.IsNotExist(err) {
+		// copy file
+		input, err := ioutil.ReadFile(filePath)
+		if err != nil {
+			panic(err)
+		}
+		err = ioutil.WriteFile(backupFile, input, 0644)
+		if err != nil {
+			panic(err)
+		}
+	}
 }
 
 // Find all images in a file
@@ -104,6 +123,7 @@ func (mu *MarkdownUp) uploadImages(images []string) map[string]string {
 			panic(err)
 		}
 		ret[image] = hash
+		log.Infof("[uploaded] from: %v to: %v", image, hash)
 	}
 	return ret
 }
@@ -126,7 +146,11 @@ func (mu *MarkdownUp) imageType(imageUrl string) ImageType {
 
 func (mu *MarkdownUp) isQiniuDomain(url *url.URL) bool {
 	isHttpOrHttps := url.Scheme == "http" || url.Scheme == "https"
-	isQiniuHost := mu.up.domain == url.Host
+	domainUrl, err := url.Parse(mu.up.domain)
+	if err != nil {
+		panic(err)
+	}
+	isQiniuHost := domainUrl.Host == url.Host
 	return isHttpOrHttps && isQiniuHost
 }
 
@@ -166,4 +190,19 @@ func (mu *MarkdownUp) decorateWithMarkImage(src string) string {
 	}
 	u.Path = path.Join(u.Path, src)
 	return u.String()
+}
+
+func (mu *MarkdownUp) rollback(filePath string) {
+	fileName := filePath[(strings.LastIndex(filePath, "/"))+1:]
+	backupFile := path.Join(home, fileName)
+	log.Info("roll back file: " + filePath)
+	// copy file, backup to file path
+	input, err := ioutil.ReadFile(backupFile)
+	if err != nil {
+		log.Error(err)
+	}
+	err = ioutil.WriteFile(filePath, input, 0644)
+	if err != nil {
+		log.Error(err)
+	}
 }

@@ -7,14 +7,88 @@ import (
 	"context"
 	"strings"
 	"io/ioutil"
-	"path"
 	"github.com/qiniu/x/log.v7"
+	"flag"
+	"path"
+	"fmt"
+	"encoding/json"
 )
 
 var (
-	mdSuffix  = []string{".md", ".markdown"}
-	imgSuffix = []string{".jpg", ".png", ".ico"}
+	mdSuffix   = []string{".md", ".markdown"}
+	imgSuffix  = []string{".jpg", ".png", ".ico"}
+	configFile = "config.json"
+	config     = Config{}
+	// command line flags
+	// log等级，mdiup家目录地址，默认$HOME/.mdiup
+	logLevel, home string
+	// 是否备份，是否回滚
+	backup, rollback bool
+	// file or dir path
+	filePath string
 )
+
+func init() {
+	parseArgs()
+	makeHomeDir()
+	parseConfigFile()
+	setLogLevel()
+}
+
+func setLogLevel() {
+	//level: 0(Debug), 1(Info), 2(Warn), 3(Error), 4(Panic), 5(Fatal)
+	switch logLevel {
+	case "debug", "DEBUG":
+		log.Std.Level = 0
+	case "info", "INFO":
+		log.Std.Level = 1
+	case "warn", "WARN":
+		log.Std.Level = 2
+	case "error", "ERROR":
+		log.Std.Level = 3
+	case "panic", "PANIC":
+		log.Std.Level = 4
+	case "fatal", "FATAL":
+		log.Std.Level = 5
+	default:
+		return
+	}
+}
+
+func parseConfigFile() {
+	conf, err := ioutil.ReadFile(path.Join(home, configFile))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if json.Unmarshal(conf, &config); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func parseArgs() {
+	flag.StringVar(&logLevel, "log", "info", "logging level")
+	flag.StringVar(&home, "home", path.Join(os.Getenv("HOME"), ".mdiup"), "mdiup home directory")
+	flag.BoolVar(&backup, "backup", false, "set true to backup markdown when upload")
+	flag.BoolVar(&rollback, "rollback", false, "whether rollback markdown files")
+	setupFlags(flag.CommandLine)
+	flag.Parse()
+	filePath = flag.Arg(0)
+}
+
+func makeHomeDir() {
+	if _, err := os.Stat(home); os.IsNotExist(err) {
+		// make dir
+		os.Mkdir(home, 0755)
+	}
+}
+
+func setupFlags(f *flag.FlagSet) {
+	f.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [flags] markdown_file_path.\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "flags: \n")
+		flag.PrintDefaults()
+	}
+}
 
 // Check if is hidden file
 func checkIsHiddenFile(name string) bool {
@@ -56,6 +130,13 @@ func listDirFiles(dir string, suffix []string) (fileAbsPaths []string, err error
 	return
 }
 
+type Config struct {
+	AccessKey string `json:"accessKey"`
+	SecretKey string `json:"secretKey"`
+	Bucket    string `json:"bucket"`
+	Domain    string `json:"domain"`
+}
+
 type Uploader struct {
 	accessKey      string
 	secretKey      string
@@ -77,8 +158,7 @@ func NewUploader(accessKey, secretKey, bucket string, allowImgSuffix []string) *
 		secretKey:      secretKey,
 		bucket:         bucket,
 		allowImgSuffix: allowImgSuffix,
-		// todo
-		domain: "http://pebbx585u.bkt.clouddn.com",
+		domain:         config.Domain,
 	}
 	upload.init()
 	return upload
@@ -184,75 +264,10 @@ func (u *Uploader) checkIsDir(path string) (result bool, err error) {
 
 // Upload images in markdown to qiniu and replace
 func main() {
-	//fromNet()
+	if filePath == "" {
+		flag.CommandLine.Usage()
+		os.Exit(1)
+	}
+	markdownUp := NewMarkdownUp(filePath, config.AccessKey, config.SecretKey, config.Bucket, nil)
+	markdownUp.upload()
 }
-
-/*
-func fromLocal() {
-	localFile := "/Users/hgao/Downloads/lk_gouweiba.jpg"
-	key := "lk_gouweiba.jpg"
-
-	putPolicy := storage.PutPolicy{
-		Scope: bucket,
-	}
-	mac := qbox.NewMac(accessKey, secretKey)
-	upToken := putPolicy.UploadToken(mac)
-
-	cfg := storage.Config{}
-	// 空间对应的机房
-	cfg.Zone = &storage.ZoneHuadong
-	// 是否使用https域名
-	cfg.UseHTTPS = false
-	// 上传是否使用CDN上传加速
-	cfg.UseCdnDomains = false
-
-	// 构建表单上传的对象
-	formUploader := storage.NewFormUploader(&cfg)
-	ret := storage.PutRet{}
-
-	// 可选配置
-	//putExtra := storage.PutExtra{
-	//	Params: map[string]string{
-	//		"x:name": "github logo",
-	//	},
-	//}
-	err := formUploader.PutFile(context.Background(), &ret, upToken, key, localFile, nil)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	fmt.Println(ret.Key, ret.Hash)
-}
-
-func fromNet() {
-	bucket := "image"
-	resURL := "http://devtools.qiniu.com/qiniu.png"
-
-	mac := qbox.NewMac(accessKey, secretKey)
-
-	cfg := storage.Config{
-		// 是否使用https域名进行资源管理
-		UseHTTPS: false,
-	}
-	// 指定空间所在的区域，如果不指定将自动探测
-	// 如果没有特殊需求，默认不需要指定
-	cfg.Zone = &storage.ZoneHuadong
-	bucketManager := storage.NewBucketManager(mac, &cfg)
-
-	// 指定保存的key
-	fetchRet, err := bucketManager.Fetch(resURL, bucket, "qiniu.png")
-	if err != nil {
-		fmt.Println("fetch error,", err)
-	} else {
-		fmt.Println(fetchRet.String())
-	}
-
-	// 不指定保存的key，默认用文件hash作为文件名
-	fetchRet, err = bucketManager.FetchWithoutKey(resURL, bucket)
-	if err != nil {
-		fmt.Println("fetch error,", err)
-	} else {
-		fmt.Println(fetchRet.String())
-	}
-}
-*/
