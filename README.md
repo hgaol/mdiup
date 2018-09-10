@@ -36,10 +36,15 @@ log - 设置log等级，Debug, Info, Warn, Error, Panic, Fatal
 
 rollback - 是否回滚，会查找home下的该文件，有则替换目标路径下的markdown文件
 
+**注意**：使用前需要在home所在的目录创建配置文件，`config.json` 
 
-
-## Screenshot
-
-![image-20180910133548355](http://pebbx585u.bkt.clouddn.com/FpVOW6w7wva1Dlmqem-itDaaRpSe)
-
+```json
+{
+    "accessKey": "xxx",
+    "secretKey": "xxx",
+    "bucket": "xxx",
+    // "domain": "http://xxx.bkt.clouddn.com"
+    "domain": "xxx"
+}
+```
 
