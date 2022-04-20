@@ -2,8 +2,6 @@
 
 mdiup(markdown images uploader)是一个用来将markdown中的图片上传至图床的小工具（目前支持七牛云）。
 
-
-
 ## Build
 
 ```shell
